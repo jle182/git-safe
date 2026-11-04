@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>git safe — scan public repos before you trust them</title>
+<meta name="description" content="git safe is a git wrapper that checks a shared scan database first, then scans any public repo with your own OpenRouter key. No key, no scan — but you can still see what others found.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡</text></svg>">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<nav>
+  <a class="logo" href="/">🛡 git&nbsp;<span>safe</span></a>
+  <div class="nav-links">
+    <a data-gh href="#" target="_blank" rel="noopener">GitHub ↗</a>
+    <a class="btn btn-solid" data-gh href="#" target="_blank" rel="noopener">Download</a>
+  </div>
+</nav>
+
+<div id="offline-banner" class="offline hidden">⚠ can't reach the git-safe database right now — stats below may be stale</div>
+
+<header class="hero">
+  <h1>Scan any public repo<br><em>before</em> you trust it.</h1>
+  <p class="sub"><code>git safe</code> checks the shared scan database first —
+    <b>“3 scans done · 5 vulnerabilities found”</b> — then offers to scan with
+    <b>your</b> OpenRouter key and shares the result back. No key? No scan — but you can still see what others found.</p>
+  <div class="install-row">
+    <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/jle182/git-safe/main/install.sh | sh</code>
+    <button id="copy-btn" type="button">copy</button>
+  </div>
+  <p class="tiny">One file, stdlib-only Python · needs git · your API key never leaves your machine</p>
+</header>
+
+<section class="stats-band" aria-label="live statistics">
+  <div class="stat"><div class="num" id="st-scans">—</div><div class="lbl">scans run</div></div>
+  <div class="stat"><div class="num" id="st-repos">—</div><div class="lbl">repos covered</div></div>
+  <div class="stat"><div class="num red" id="st-vulns">—</div><div class="lbl">vulnerabilities found</div></div>
+  <div class="stat"><div class="num" id="st-day">—</div><div class="lbl">scans last 24h</div></div>
+</section>
+
+<section class="panel">
+  <h2>Check a repo</h2>
+  <p class="muted">What everyone's scans say so far — no key needed.</p>
+  <form id="lookup-form" class="lookup-form">
+    <input id="lookup-input" type="text" placeholder="owner/repo or https://github.com/owner/repo" autocomplete="off" spellcheck="false">
+    <button class="btn btn-solid" type="submit">Check</button>
+  </form>
+  <div id="lookup-result" class="pithy hidden"></div>
+  <table id="lookup-history" class="hidden"></table>
+</section>
+
+<section class="panel">
+  <h2>Most scanned repos</h2>
+  <table id="top-repos"></table>
+</section>
+
+<section class="how">
+  <div class="card">
+    <div class="step">1</div>
+    <h3>Ask first</h3>
+    <p><code>git safe owner/repo</code> checks the shared database and gives you the pithy summary: scans done, vulnerabilities found.</p>
+  </div>
+  <div class="card">
+    <div class="step">2</div>
+    <h3>Scan with your key</h3>
+    <p>Want a fresh look? It clones shallow, pre-filters the risky files, and reviews them with the OpenRouter model of your choice — on your key.</p>
+  </div>
+  <div class="card">
+    <div class="step">3</div>
+    <h3>Share the counts</h3>
+    <p>The result lands in the public database so the next person sees the summary before spending a cent. Finding details stay with you.</p>
+  </div>
+</section>
+
+<section class="panel privacy">
+  <h2>The deal</h2>
+  <ul>
+    <li><b>Your key stays yours.</b> It's sent only to OpenRouter, from your machine. The server never sees it.</li>
+    <li><b>Counts are public, details aren't.</b> The database shares scan counts and totals; full finding lists stay in your local report.</li>
+    <li><b>Public repos only.</b> <code>git safe</code> refuses anything that isn't publicly cloneable.</li>
+    <li><b>LLM findings ≠ truth.</b> Results are model-generated leads, not an audit. Verify before you panic.</li>
+  </ul>
+</section>
+
+<footer>
+  <span>MIT licensed · <a data-gh href="#" target="_blank" rel="noopener">source on GitHub</a></span>
+  <span>not affiliated with OpenRouter or GitHub · scans are informational, not a security audit</span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

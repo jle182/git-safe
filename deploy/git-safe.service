@@ -1,0 +1,17 @@
+[Unit]
+Description=git-safe server (scan database API + stats site)
+After=network.target
+
+[Service]
+User=gitsafe
+WorkingDirectory=/var/lib/git-safe
+ExecStart=/usr/bin/python3 /opt/git-safe/server/server.py --addr 127.0.0.1:8080 --db /var/lib/git-safe/git-safe.db --web /opt/git-safe/web
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/git-safe
+
+[Install]
+WantedBy=multi-user.target

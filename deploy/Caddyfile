@@ -1,0 +1,5 @@
+# replace {$DOMAIN} below with e.g. 203-0-113-7.nip.io or your real domain,
+# or export DOMAIN before `caddy run`.
+{$DOMAIN} {
+	reverse_proxy 127.0.0.1:8080
+}

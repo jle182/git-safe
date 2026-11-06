@@ -1,4 +1,4 @@
-"""OpenRouter integration: chunked security review with the user's own key."""
+"""OpenRouter integration: chunked security + telemetry review with the user's own key."""
 import json
 import re
 import time
@@ -11,14 +11,22 @@ DEFAULT_MODEL = "openai/gpt-4o-mini"
 PRICES = {"openai/gpt-4o-mini": (0.15, 0.60), "openai/gpt-oss-120b": (0.07, 0.30)}
 
 SYSTEM = (
-    "You are git-safe, a static security scanner for open-source repositories. You receive source "
-    "files and report security vulnerabilities only: hardcoded secrets or keys, SQL/command/path "
-    "injection, unsafe deserialization, disabled TLS verification, auth bypass, and clearly "
-    "dangerous patterns. Ignore style issues and anything you are not confident about. severity: "
-    "high = directly exploitable or leaked credential; medium = risky pattern; low = hardening "
-    "suggestion. Respond ONLY with a JSON object of the form "
-    '{"findings": [{"file": "path", "line": 0, "severity": "high|medium|low", '
-    '"title": "short title", "description": "one sentence"}]}. If nothing found: {"findings": []}'
+    "You are git-safe, a static analyzer for open-source repositories. You receive source "
+    "files and report findings in exactly two categories.\n"
+    'category "vulnerability": security issues only - hardcoded secrets or keys, SQL/command/'
+    "path injection, unsafe deserialization, disabled TLS verification, auth bypass, clearly "
+    "dangerous patterns. severity: high = directly exploitable or leaked credential; medium = "
+    "risky pattern; low = hardening suggestion.\n"
+    'category "telemetry": code that collects or transmits usage data - analytics SDKs, '
+    "tracking pixels, session recorders, crash reporters, ads trackers, usage beacons, or "
+    "update checkers that phone home. Telemetry findings always use severity \"info\" and are "
+    "NOT vulnerabilities; legitimate projects include them, you surface them so users can "
+    "decide.\n"
+    "Ignore style issues and anything you are not confident about. Respond ONLY with a JSON "
+    "object of the form "
+    '{"findings": [{"file": "path", "line": 0, "category": "vulnerability|telemetry", '
+    '"severity": "high|medium|low|info", "title": "short title", "description": "one sentence"}]}. '
+    'If nothing found: {"findings": []}'
 )
 
 
@@ -90,9 +98,17 @@ def _scan_one(key, model, chunk, tries=2):
                     line = int(f.get("line") or 0)
                 except (TypeError, ValueError):
                     line = 0
+                category = ("telemetry"
+                            if str(f.get("category", "")).strip().lower() == "telemetry"
+                            else "vulnerability")
+                sev = str(f.get("severity", "medium")).lower()
+                if category == "telemetry":
+                    sev = "info"
+                elif sev not in ("high", "medium", "low"):
+                    sev = "medium"
                 out.append({
                     "file": str(f.get("file", "?"))[:512], "line": line,
-                    "severity": str(f.get("severity", "medium")).lower(),
+                    "category": category, "severity": sev,
                     "title": title, "description": str(f.get("description", ""))[:2000],
                 })
             return out
@@ -104,7 +120,7 @@ def _scan_one(key, model, chunk, tries=2):
     raise LLMError(f"model did not return valid JSON: {last}")
 
 
-SEV_ORDER = {"high": 0, "medium": 1, "low": 2}
+SEV_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
 
 def scan_chunks(key, model, chunks, on_progress=None):
@@ -120,11 +136,12 @@ def scan_chunks(key, model, chunks, on_progress=None):
                 on_progress(i, len(chunks))
     seen, uniq = set(), []
     for f in findings:
-        k = (f["file"], f["line"], f["title"].lower())
+        k = (f["file"], f["line"], f["title"].lower(), f["category"])
         if k in seen:
             continue
         seen.add(k)
-        f["severity"] = f["severity"] if f["severity"] in SEV_ORDER else "medium"
+        if f["severity"] not in SEV_ORDER:
+            f["severity"] = "info" if f["category"] == "telemetry" else "medium"
         uniq.append(f)
     uniq.sort(key=lambda f: SEV_ORDER[f["severity"]])
     return uniq, errs

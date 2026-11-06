@@ -49,6 +49,24 @@ PATTERNS = [
     (re.compile(r"(?i)pickle\.loads|yaml\.load\((?![^)]*Loader)"), "unsafe deserialization"),
 ]
 
+TELEMETRY_PATTERNS = [
+    (re.compile(r"(?i)google-analytics\.com|googletagmanager\.com|gtag\("), "Google Analytics"),
+    (re.compile(r"(?i)connect\.facebook\.net|fbq\("), "Facebook Pixel"),
+    (re.compile(r"(?i)segment\.(com|io)|analytics\.track\("), "Segment analytics"),
+    (re.compile(r"(?i)mixpanel"), "Mixpanel analytics"),
+    (re.compile(r"(?i)amplitude"), "Amplitude analytics"),
+    (re.compile(r"(?i)posthog"), "PostHog analytics"),
+    (re.compile(r"(?i)sentry\.io|Sentry\.init"), "Sentry error reporting"),
+    (re.compile(r"(?i)bugsnag|crashlytics"), "crash reporting SDK"),
+    (re.compile(r"(?i)hotjar|fullstory|smartlook|clarity\.ms"), "session recording"),
+    (re.compile(r"(?i)navigator\.sendBeacon"), "browser beacon (sendBeacon)"),
+    (re.compile(r"(?i)matomo|piwik\.php"), "Matomo/Piwik analytics"),
+    (re.compile(r"(?i)applicationinsights|appinsights"), "Azure Application Insights"),
+    (re.compile(r"(?i)optimizely|vwo\.com"), "A/B experiment tracking"),
+    (re.compile(r"(?i)trackPageView|trackEvent|logEvent\("), "usage tracking calls"),
+    (re.compile(r"(?i)update-notifier|updateNotifier"), "update/usage phone-home"),
+]
+
 HIGH_VALUE_NAMES = {
     "package.json", "requirements.txt", "go.mod", "cargo.toml", "pyproject.toml",
     "pom.xml", "build.gradle", "composer.json", "gemfile", "dockerfile",
@@ -73,7 +91,7 @@ def shallow_clone(url, dst=None, timeout=60):
         )
     except subprocess.TimeoutExpired:
         shutil.rmtree(dst, ignore_errors=True)
-        raise ScanError(f"clone timed out after {timeout}s — network unreachable or repo too large") from None
+        raise ScanError(f"clone timed out after {timeout}s \u2014 network unreachable or repo too large") from None
     if p.returncode != 0:
         shutil.rmtree(dst, ignore_errors=True)
         lines = [l for l in (p.stderr or "").strip().splitlines() if l.strip()]
@@ -129,6 +147,8 @@ def prefilter_hits(files):
         except OSError:
             continue
         notes = [note for rx, note in PATTERNS if rx.search(text)]
+        tele = ["telemetry: " + t for rx, t in TELEMETRY_PATTERNS if rx.search(text)]
+        notes = notes + tele
         if notes:
             hits[e["path"]] = notes
     return hits

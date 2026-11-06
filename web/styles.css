@@ -61,7 +61,7 @@ h1 em { color: var(--green); font-style: normal; }
 .tiny { margin-top: 14px; font-size: 13px; color: var(--dim); }
 
 .stats-band {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px;
   max-width: 1060px; margin: 48px auto; padding: 0 24px;
 }
 .stat {
@@ -70,6 +70,7 @@ h1 em { color: var(--green); font-style: normal; }
 }
 .stat .num { font-family: var(--mono); font-size: 34px; font-weight: 700; color: var(--green); }
 .stat .num.red { color: var(--red); }
+.stat .num.amber { color: #fbbf24; }
 .stat .lbl { color: var(--dim); font-size: 13px; margin-top: 4px; }
 
 .panel {

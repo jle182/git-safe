@@ -1,4 +1,4 @@
-"""git safe — the CLI. Flow: cache check -> pithy summary -> confirm -> scan -> save."""
+"""git safe \u2014 the CLI. Flow: cache check -> pithy summary -> confirm -> scan -> save."""
 import argparse
 import json
 import os
@@ -59,8 +59,10 @@ def main(argv=None):
         warn(f"database unreachable ({e})")
 
     if summary is not None:
-        n, v = summary.get("scans", 0), summary.get("vulnerabilities", 0)
-        line = (f"{n} scans done \u00b7 {v} vulnerabilities found" if n
+        n = summary.get("scans", 0)
+        v = summary.get("vulnerabilities", 0)
+        t = summary.get("telemetry", 0)
+        line = (f"{n} scans done \u00b7 {v} vulnerabilities \u00b7 {t} telemetry signals found" if n
                 else "0 scans so far \u2014 first look at this repo")
         print("  " + ARROW + " " + c(line, "bold"))
         if n and summary.get("last_scanned"):
@@ -73,7 +75,7 @@ def main(argv=None):
         print(dim("    (the summary above comes from other people's scans)"))
         sys.exit(0)
 
-    print(dim("    cloning (shallow)…"))
+    print(dim("    cloning (shallow)\u2026"))
     try:
         workdir, sha = shallow_clone(r["clone_url"])
     except ScanError as e:
@@ -84,7 +86,8 @@ def main(argv=None):
     try:
         ci = (client.repo_scans(r["canonical"], sha=sha).get("commit") or {})
         if ci.get("scans"):
-            line = f"this exact commit: {ci['scans']} scans \u00b7 {ci['vulnerabilities']} vulnerabilities"
+            line = (f"this exact commit: {ci['scans']} scans \u00b7 {ci['vulnerabilities']} "
+                    f"vulnerabilities \u00b7 {ci.get('telemetry', 0)} telemetry signals")
             print("  " + ARROW + " " + c(line, "bold"))
             if not (a.yes or confirm("rescan anyway?")):
                 print(dim("nothing done."))
@@ -126,10 +129,14 @@ def main(argv=None):
     if errs:
         warn(f"{len(errs)} chunk(s) failed: {errs[0]}")
     dt = time.monotonic() - t0
-    high = sum(1 for f in findings if f["severity"] == "high")
-    med = sum(1 for f in findings if f["severity"] == "medium")
-    low = len(findings) - high - med
-    line = f"done in {dt:.0f}s \u00b7 {len(findings)} vulnerabilities found ({high} high \u00b7 {med} medium \u00b7 {low} low)"
+    vulns = [f for f in findings if f.get("category") == "vulnerability"]
+    tels = [f for f in findings if f.get("category") == "telemetry"]
+    high = sum(1 for f in vulns if f["severity"] == "high")
+    med = sum(1 for f in vulns if f["severity"] == "medium")
+    low = len(vulns) - high - med
+    line = (f"done in {dt:.0f}s \u00b7 {len(vulns)} vulnerabilities "
+            f"({high} high \u00b7 {med} medium \u00b7 {low} low)"
+            f" \u00b7 {len(tels)} telemetry signals")
     print("  " + ARROW + " " + c(line, "bold"))
 
     report = {"repo": r["canonical"], "commit": sha, "model": a.model,
@@ -145,9 +152,13 @@ def main(argv=None):
         warn(f"couldn't save to the database ({e}) \u2014 report kept locally")
     print(dim(f"full report: {rep_path}"))
     for f in findings[:10]:
-        print(f"    [{f['severity'][:1].upper()}] {f['file']}:{f['line']} \u2014 {f['title']}")
+        if f.get("category") == "telemetry":
+            tag = "T"
+        else:
+            tag = f["severity"][:1].upper()
+        print(f"    [{tag}] {f['file']}:{f['line']} \u2014 {f['title']}")
     if len(findings) > 10:
-        print(dim(f"    … and {len(findings) - 10} more in the full report"))
+        print(dim(f"    \u2026 and {len(findings) - 10} more in the full report"))
     print()
 
 

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS scans(
   model TEXT NOT NULL,
   files_scanned INTEGER NOT NULL,
   vulnerabilities INTEGER NOT NULL,
+  telemetry INTEGER NOT NULL DEFAULT 0,
   high INTEGER NOT NULL,
   medium INTEGER NOT NULL,
   low INTEGER NOT NULL,
@@ -50,6 +51,11 @@ def init_db():
     _conn.row_factory = sqlite3.Row
     _conn.execute("PRAGMA journal_mode=WAL")
     _conn.executescript(SCHEMA)
+    try:  # migrate pre-0.2 databases that lack the telemetry column
+        _conn.execute("ALTER TABLE scans ADD COLUMN telemetry INTEGER NOT NULL DEFAULT 0")
+        _conn.commit()
+    except sqlite3.OperationalError:
+        pass
     _conn.commit()
 
 
@@ -71,7 +77,7 @@ class RateLimiter:
 
 
 limiter = RateLimiter()
-SEVERITIES = {"high", "medium", "low"}
+SEVERITIES = {"high", "medium", "low", "info"}
 
 
 def validate_scan(body):
@@ -111,17 +117,27 @@ def validate_scan(body):
         except (TypeError, ValueError):
             line = 0
         sev = str(f.get("severity", "medium"))
+        category = ("telemetry"
+                    if str(f.get("category", "vulnerability")).strip().lower() == "telemetry"
+                    else "vulnerability")
+        if category == "telemetry":
+            sev = "info"
+        elif sev not in ("high", "medium", "low"):
+            sev = "medium"
         clean.append({
             "file": str(f.get("file", "?"))[:512],
             "line": line,
-            "severity": sev if sev in SEVERITIES else "medium",
+            "category": category,
+            "severity": sev,
             "title": title,
             "description": str(f.get("description", ""))[:2000],
         })
+    vulns = sum(1 for f in clean if f["category"] == "vulnerability")
+    tele = len(clean) - vulns
     counts = {s: sum(1 for f in clean if f["severity"] == s) for s in SEVERITIES}
     return {
         "repo": canon, "sha": sha, "model": model, "files": files, "rid": rid.lower(),
-        "findings": clean, "vulns": len(clean),
+        "findings": clean, "vulns": vulns, "tele": tele,
         "high": counts["high"], "medium": counts["medium"], "low": counts["low"],
     }, None
 
@@ -174,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
         if urlparse(self.path).path != "/api/v1/scans":
             return self._json(404, {"error": "not found"})
         if not limiter.allow(self._client_ip()):
-            return self._json(429, {"error": "rate limited — max 10 scans/hour per IP"})
+            return self._json(429, {"error": "rate limited \u2014 max 10 scans/hour per IP"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -197,8 +213,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(201, {"id": row["id"], "duplicate": True})
             cur = _conn.execute(
                 "INSERT INTO scans(repo_url,commit_sha,model,files_scanned,vulnerabilities,"
-                "high,medium,low,findings_json,reporter_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (v["repo"], v["sha"], v["model"], v["files"], v["vulns"],
+                "telemetry,high,medium,low,findings_json,reporter_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (v["repo"], v["sha"], v["model"], v["files"], v["vulns"], v["tele"],
                  v["high"], v["medium"], v["low"], json.dumps(v["findings"]), v["rid"]),
             )
             _conn.commit()
@@ -214,41 +230,44 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._json(400, {"error": "not a valid repository URL"})
         with _dblock:
-            n, vulns, last, last_model = _conn.execute(
-                "SELECT COUNT(*), COALESCE(SUM(vulnerabilities),0), MAX(scanned_at), "
+            n, vulns, tele, last, last_model = _conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(vulnerabilities),0), COALESCE(SUM(telemetry),0), "
+                "MAX(scanned_at), "
                 "(SELECT model FROM scans s2 WHERE s2.repo_url=scans.repo_url ORDER BY scanned_at DESC LIMIT 1) "
                 "FROM scans WHERE repo_url=?", (canon,),
             ).fetchone()
             history = [dict(r) for r in _conn.execute(
-                "SELECT commit_sha, scanned_at, model, files_scanned, vulnerabilities "
+                "SELECT commit_sha, scanned_at, model, files_scanned, vulnerabilities, telemetry "
                 "FROM scans WHERE repo_url=? ORDER BY scanned_at DESC LIMIT 20", (canon,),
             )]
-            out = {"repo": canon, "scans": n, "vulnerabilities": vulns,
+            out = {"repo": canon, "scans": n, "vulnerabilities": vulns, "telemetry": tele,
                    "last_scanned": last, "last_model": last_model, "history": history}
             sha = (qs.get("sha") or [""])[0]
             if re.fullmatch(r"[0-9a-f]{40}", sha):
-                cs, cv = _conn.execute(
-                    "SELECT COUNT(*), COALESCE(SUM(vulnerabilities),0) FROM scans "
-                    "WHERE repo_url=? AND commit_sha=?", (canon, sha),
+                cs, cv, ct = _conn.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(vulnerabilities),0), COALESCE(SUM(telemetry),0) "
+                    "FROM scans WHERE repo_url=? AND commit_sha=?", (canon, sha),
                 ).fetchone()
-                out["commit"] = {"sha": sha, "scans": cs, "vulnerabilities": cv}
+                out["commit"] = {"sha": sha, "scans": cs, "vulnerabilities": cv, "telemetry": ct}
         self._json(200, out)
 
     def _stats(self):
         with _dblock:
-            tot, repos, vulns, high = _conn.execute(
+            tot, repos, vulns, tele, high = _conn.execute(
                 "SELECT COUNT(*), COUNT(DISTINCT repo_url), COALESCE(SUM(vulnerabilities),0), "
-                "COALESCE(SUM(high),0) FROM scans"
+                "COALESCE(SUM(telemetry),0), COALESCE(SUM(high),0) FROM scans"
             ).fetchone()
             day = _conn.execute(
                 "SELECT COUNT(*) FROM scans WHERE scanned_at >= datetime('now','-1 day')"
             ).fetchone()[0]
             top = [dict(r) for r in _conn.execute(
-                "SELECT repo_url AS repo, COUNT(*) AS scans, COALESCE(SUM(vulnerabilities),0) AS vulnerabilities "
+                "SELECT repo_url AS repo, COUNT(*) AS scans, COALESCE(SUM(vulnerabilities),0) AS vulnerabilities, "
+                "COALESCE(SUM(telemetry),0) AS telemetry "
                 "FROM scans GROUP BY repo_url ORDER BY scans DESC LIMIT 10"
             )]
         self._json(200, {
             "total_scans": tot, "unique_repos": repos, "total_vulnerabilities": vulns,
+            "total_telemetry": tele,
             "high_vulnerabilities": high, "scans_last_24h": day, "top_repos": top,
         })
 

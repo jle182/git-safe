@@ -71,7 +71,7 @@ def _cmd_model(args):
 
 def _cmd_models(args):
     flt = args[0] if args and not args[0].startswith("-") else None
-    print(dim("    fetching model list from OpenRouter\u2026"))
+    print(dim("    fetching model list from OpenRouter..."))
     try:
         raw = fetch_models()
     except LLMError as e:
@@ -85,24 +85,51 @@ def _cmd_models(args):
         except (TypeError, ValueError):
             pin = pout = 0.0
         rows.append((str(m.get("id", "?")), pin, pout, int(m.get("context_length") or 0)))
-    if flt == "free":
-        rows = [r for r in rows if r[1] == 0 and r[2] == 0]
-    elif flt:
-        q = flt.lower()
-        rows = [r for r in rows if q in r[0].lower()]
     rows.sort(key=lambda r: (r[1], r[2]))
-    if not rows:
-        print("  no models match.")
+
+    def show(rs, limit):
+        for mid, pin, pout, ctx in rs[:limit]:
+            ctxs = f"{ctx / 1000:.0f}k" if ctx >= 1000 else str(ctx)
+            if pin == 0 and pout == 0:
+                price = "free"
+            else:
+                price = f"${pin:.2f} in / ${pout:.2f} out"
+            print(f"    {mid:<46} {price:>22}   {ctxs:>6} ctx")
+
+    if flt == "free":
+        free = [r for r in rows if r[1] == 0 and r[2] == 0]
+        print(f"\n  {len(free)} free models (of {len(rows)} total) - set one: git safe model <id>\n")
+        show(free, 40)
+        if len(free) > 40:
+            print(dim(f"    ... and {len(free) - 40} more"))
         return
-    print(f"\n  {len(rows)} models, cheapest first \u2014 set one: git safe model <id>\n")
-    for mid, pin, pout, ctx in rows[:25]:
-        ctxs = f"{ctx / 1000:.0f}k" if ctx >= 1000 else str(ctx)
-        print(f"    {mid:<44} ${pin:>8.2f} in \u00b7 ${pout:>8.2f} out /M tok \u00b7 {ctxs:>6} ctx")
-    if len(rows) > 25:
-        print(dim(f"    \u2026 and {len(rows) - 25} more \u2014 narrow it: git safe models <text>"))
+    if flt:
+        q = flt.lower()
+        hits = [r for r in rows if q in r[0].lower()]
+        if not hits:
+            print("  no models match.")
+            return
+        print(f"\n  {len(hits)} models matching '{flt}' (of {len(rows)} total)\n")
+        show(hits, 40)
+        if len(hits) > 40:
+            print(dim(f"    ... and {len(hits) - 40} more - narrow the search"))
+        return
 
+    free = [r for r in rows if r[1] == 0 and r[2] == 0]
+    paid = [r for r in rows if not (r[1] == 0 and r[2] == 0)]
+    print(f"\n  {len(rows)} models on OpenRouter: {len(free)} free \u00b7 {len(paid)} paid\n")
+    print(c("  FREE", "green"))
+    show(free, 8)
+    if len(free) > 8:
+        print(dim(f"    ... {len(free) - 8} more - git safe models free"))
+    print()
+    print(c("  PAID, cheapest first", "bold"))
+    show(paid, 30)
+    if len(paid) > 30:
+        print(dim(f"    ... and {len(paid) - 30} more - search: git safe models <name, e.g. openai>"))
+    print(dim("\n    set one: git safe model <id>"))
 
-def main(argv=None):
+def _cli(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "key":
         _cmd_key(args[1:])
@@ -261,6 +288,14 @@ def main(argv=None):
     if len(findings) > 10:
         print(dim(f"    \u2026 and {len(findings) - 10} more in the full report"))
     print()
+
+
+def main(argv=None):
+    try:
+        _cli(argv)
+    except (KeyboardInterrupt, EOFError):
+        print("\n  cancelled.")
+        sys.exit(130)
 
 
 if __name__ == "__main__":

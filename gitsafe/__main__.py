@@ -1,5 +1,6 @@
 """git safe \u2014 the CLI. Flow: cache check -> pithy summary -> confirm -> scan -> save."""
 import argparse
+import getpass
 import json
 import os
 import shutil
@@ -10,9 +11,11 @@ from pathlib import Path
 from . import __version__
 from .api import APIError, Client
 from .identity import reporter_id
-from .llm import DEFAULT_MODEL, KeyRejected, LLMError, estimate_cost, scan_chunks
+from .llm import DEFAULT_MODEL, KeyRejected, LLMError, estimate_cost, fetch_models, scan_chunks, verify_key
 from .normalize import normalize
 from .scanner import RepoTooBig, ScanError, collect_files, make_chunks, select_files, shallow_clone
+from .settings import (get_key, get_model, mask, remove_key, remove_model,
+                       set_key, set_model, stored_key)
 from .ui import c, confirm, dim, err, kv, warn
 
 ARROW = c("\u2192", "green")
@@ -26,7 +29,91 @@ def _save_report(owner, name, sha, report) -> Path:
     return p
 
 
+def _cmd_key(args):
+    if "-r" in args or "--remove" in args:
+        print("  key removed." if remove_key() else "  no stored key found.")
+        return
+    cur = stored_key()
+    if cur:
+        print(f"  a key is already stored ({mask(cur)})")
+        if not confirm("replace it?"):
+            return
+    k = getpass.getpass("  OpenRouter key (input hidden): ").strip()
+    if len(k) < 20:
+        err("that doesn't look like an OpenRouter key (too short) \u2014 nothing saved")
+        sys.exit(1)
+    set_key(k)
+    print("  " + c("key saved to ~/.config/git-safe/key (chmod 600)", "green"))
+    print(dim("    checking with OpenRouter\u2026"), end=" ", flush=True)
+    try:
+        verify_key(k)
+        print(c("key is valid \u2713", "green"))
+    except KeyRejected as e:
+        print(c(f"WARNING: {e}", "yellow"))
+    except LLMError as e:
+        print(c(f"couldn't reach OpenRouter to verify ({e}) \u2014 it may still work", "yellow"))
+
+
+def _cmd_model(args):
+    vals = [a for a in args if not a.startswith("-")]
+    if "-r" in args or "--remove" in args or "--unset" in args:
+        print("  default model cleared." if remove_model() else "  no stored default model.")
+        return
+    if vals:
+        set_model(vals[0])
+        print("  " + c(f"default model set to {vals[0]}", "green"))
+        return
+    cur = get_model()
+    print("  current default: " + (cur or f"{DEFAULT_MODEL} (built-in)"))
+    print(dim("    set one:    git safe model openai/gpt-oss-120b"))
+    print(dim("    browse all: git safe models         (free only: git safe models free)"))
+
+
+def _cmd_models(args):
+    flt = args[0] if args and not args[0].startswith("-") else None
+    print(dim("    fetching model list from OpenRouter\u2026"))
+    try:
+        raw = fetch_models()
+    except LLMError as e:
+        err(str(e))
+        sys.exit(1)
+    rows = []
+    for m in raw:
+        try:
+            pin = float((m.get("pricing") or {}).get("prompt") or 0) * 1e6
+            pout = float((m.get("pricing") or {}).get("completion") or 0) * 1e6
+        except (TypeError, ValueError):
+            pin = pout = 0.0
+        rows.append((str(m.get("id", "?")), pin, pout, int(m.get("context_length") or 0)))
+    if flt == "free":
+        rows = [r for r in rows if r[1] == 0 and r[2] == 0]
+    elif flt:
+        q = flt.lower()
+        rows = [r for r in rows if q in r[0].lower()]
+    rows.sort(key=lambda r: (r[1], r[2]))
+    if not rows:
+        print("  no models match.")
+        return
+    print(f"\n  {len(rows)} models, cheapest first \u2014 set one: git safe model <id>\n")
+    for mid, pin, pout, ctx in rows[:25]:
+        ctxs = f"{ctx / 1000:.0f}k" if ctx >= 1000 else str(ctx)
+        print(f"    {mid:<44} ${pin:>8.2f} in \u00b7 ${pout:>8.2f} out /M tok \u00b7 {ctxs:>6} ctx")
+    if len(rows) > 25:
+        print(dim(f"    \u2026 and {len(rows) - 25} more \u2014 narrow it: git safe models <text>"))
+
+
 def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "key":
+        _cmd_key(args[1:])
+        return
+    if args and args[0] == "model":
+        _cmd_model(args[1:])
+        return
+    if args and args[0] == "models":
+        _cmd_models(args[1:])
+        return
+
     ap = argparse.ArgumentParser(
         prog="git safe",
         description="scan public git repos for vulnerabilities with your own OpenRouter key",
@@ -34,13 +121,15 @@ def main(argv=None):
     ap.add_argument("repo", nargs="?", help="owner/repo or any public repository URL")
     ap.add_argument("--api", default=os.environ.get("GITSAFE_API", "http://localhost:8080"),
                     help="git-safe database API base URL (default: $GITSAFE_API)")
-    ap.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL),
-                    help="OpenRouter model (default: $OPENROUTER_MODEL or %s)" % DEFAULT_MODEL)
+    ap.add_argument("--model", default=None,
+                    help="model for this scan (overrides: $OPENROUTER_MODEL, git safe model default)")
     ap.add_argument("-y", "--yes", action="store_true", help="skip confirmation prompts")
     ap.add_argument("--version", action="version", version=f"git-safe {__version__}")
-    a = ap.parse_args(argv)
+    a = ap.parse_args(args)
     if not a.repo:
-        ap.error("usage: git safe <owner/repo>")
+        ap.error("usage: git safe <owner/repo>  (or: git safe key | model | models)")
+
+    model = a.model or get_model() or DEFAULT_MODEL
 
     print()
     print(f"  {c('git safe', 'bold')}  {dim('v' + __version__)}")
@@ -68,12 +157,21 @@ def main(argv=None):
         if n and summary.get("last_scanned"):
             print(dim(f"    last scanned {str(summary['last_scanned'])[:10]} with {summary.get('last_model', '?')}"))
 
-    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    key = get_key()
     if not key:
         print(f"\n  {c('no key no scan', 'bold')}")
-        print(dim("    set OPENROUTER_API_KEY to scan this repo yourself \u00b7 https://openrouter.ai/keys"))
-        print(dim("    (the summary above comes from other people's scans)"))
-        sys.exit(0)
+        print(dim("    set OPENROUTER_API_KEY, run: git safe key, or enter one now"))
+        if sys.stdin.isatty() and not a.yes and confirm("enter your OpenRouter key now?"):
+            k = getpass.getpass("  OpenRouter key (input hidden): ").strip()
+            if len(k) >= 20:
+                set_key(k)
+                key = k
+                print("  " + c("key saved \u2014 it will be reused for future scans", "green"))
+            else:
+                warn("that was too short to be a key \u2014 continuing without one")
+        if not key:
+            print(dim("    (the summary above comes from other people's scans)"))
+            sys.exit(0)
 
     print(dim("    cloning (shallow)\u2026"))
     try:
@@ -108,8 +206,8 @@ def main(argv=None):
         err("nothing scannable found in this repo")
         sys.exit(1)
 
-    est = estimate_cost(a.model, sum(f["size"] for f in selected), len(chunks))
-    print(dim(f"    plan: {len(selected)} files \u2192 {len(chunks)} chunks \u00b7 est ${est:.2f} ({a.model})"))
+    est = estimate_cost(model, sum(f["size"] for f in selected), len(chunks))
+    print(dim(f"    plan: {len(selected)} files \u2192 {len(chunks)} chunks \u00b7 est ${est:.2f} ({model})"))
     if not (a.yes or confirm("proceed with scan on YOUR OpenRouter key?")):
         print(dim("aborted \u2014 nothing scanned, nothing saved."))
         sys.exit(0)
@@ -122,12 +220,15 @@ def main(argv=None):
 
     print()
     try:
-        findings, errs = scan_chunks(key, a.model, chunks, prog)
+        findings, errs = scan_chunks(key, model, chunks, prog)
     except (KeyRejected, LLMError) as e:
         err(str(e))
         sys.exit(1)
     if errs:
         warn(f"{len(errs)} chunk(s) failed: {errs[0]}")
+    if len(errs) == len(chunks):
+        err("every chunk failed \u2014 scan aborted, nothing saved")
+        sys.exit(1)
     dt = time.monotonic() - t0
     vulns = [f for f in findings if f.get("category") == "vulnerability"]
     tels = [f for f in findings if f.get("category") == "telemetry"]
@@ -139,11 +240,11 @@ def main(argv=None):
             f" \u00b7 {len(tels)} telemetry signals")
     print("  " + ARROW + " " + c(line, "bold"))
 
-    report = {"repo": r["canonical"], "commit": sha, "model": a.model,
+    report = {"repo": r["canonical"], "commit": sha, "model": model,
               "files_scanned": len(selected), "scanned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "findings": findings}
     rep_path = _save_report(r["owner"], r["name"], sha, report)
-    payload = {"repo_url": r["canonical"], "commit_sha": sha, "model": a.model,
+    payload = {"repo_url": r["canonical"], "commit_sha": sha, "model": model,
                "files_scanned": len(selected), "findings": findings, "reporter_id": reporter_id()}
     try:
         res = client.submit(payload)

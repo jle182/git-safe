@@ -59,6 +59,19 @@ git safe https://gitlab.com/o/r  # any public git host
 
 Flags: `--api URL` · `--model NAME` · `-y` (skip prompts) · `--version`
 
+### Key & model management
+
+```console
+git safe key            # store/replace your OpenRouter key (hidden input, chmod 600)
+git safe key --remove   # forget the stored key
+git safe model          # show your current default model
+git safe model <id>     # set the default, e.g. openai/gpt-oss-120b
+git safe models         # browse OpenRouter's catalog, cheapest first
+git safe models free    # zero-cost models only
+```
+
+Precedence - model: `--model` flag > `OPENROUTER_MODEL` > stored default > built-in. Key: `OPENROUTER_API_KEY` env > stored key (chmod 600 file).
+
 Guards: public repos only · 5,000-file / 50 MB cap · cost estimate before scanning · duplicate scans per commit+reporter are deduped server-side.
 
 ## The server (API + stats site)

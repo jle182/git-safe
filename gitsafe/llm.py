@@ -147,6 +147,39 @@ def scan_chunks(key, model, chunks, on_progress=None):
     return uniq, errs
 
 
+MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+
+def verify_key(key, timeout=15):
+    req = urllib.request.Request("https://openrouter.ai/api/v1/key", headers={
+        "Authorization": "Bearer " + key, "User-Agent": "git-safe/0.3",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status == 200
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise KeyRejected("OpenRouter says this key is invalid") from None
+        raise LLMError(f"key check failed ({e.code})") from None
+    except (urllib.error.URLError, OSError) as e:
+        raise LLMError(f"cannot reach OpenRouter: {getattr(e, 'reason', e)}") from None
+
+
+def fetch_models(timeout=20):
+    req = urllib.request.Request(MODELS_URL, headers={"User-Agent": "git-safe/0.3"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"model listing failed ({e.code})") from None
+    except (urllib.error.URLError, OSError) as e:
+        raise LLMError(f"cannot reach OpenRouter: {getattr(e, 'reason', e)}") from None
+    try:
+        return data["data"]
+    except (KeyError, TypeError):
+        raise LLMError("unexpected models response shape")
+
+
 def estimate_cost(model, total_bytes, n_chunks):
     tin = total_bytes / 4 + n_chunks * 800
     tout = n_chunks * 900

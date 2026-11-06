@@ -219,5 +219,46 @@ class TestScanChunks(unittest.TestCase):
         self.assertEqual(len(calls), 3)      # 1 good call + 2 retries
 
 
+
+class TestSettings(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        tmp = tempfile.mkdtemp(prefix="gitsafe-cfg-")
+        p = mock.patch("gitsafe.settings.Path.home", lambda: Path(tmp))
+        p.start()
+        self.addCleanup(p.stop)
+        self.env = {k: os.environ.pop(k, None)
+                    for k in ("OPENROUTER_API_KEY", "OPENROUTER_MODEL")}
+
+    def tearDown(self):
+        for k, v in self.env.items():
+            if v is not None:
+                os.environ[k] = v
+
+    def test_key_roundtrip_env_precedence_and_remove(self):
+        import gitsafe.settings as st
+        self.assertIsNone(st.get_key())
+        st.set_key("sk-or-v1-" + "a" * 30)
+        self.assertEqual(st.get_key(), st.stored_key())
+        os.environ["OPENROUTER_API_KEY"] = "env-wins-0123456789"
+        self.assertEqual(st.get_key(), "env-wins-0123456789")
+        del os.environ["OPENROUTER_API_KEY"]
+        self.assertTrue(st.remove_key())
+        self.assertFalse(st.remove_key())
+        self.assertIsNone(st.get_key())
+
+    def test_model_roundtrip(self):
+        import gitsafe.settings as st
+        self.assertIsNone(st.get_model())
+        st.set_model("openai/gpt-oss-120b")
+        self.assertEqual(st.get_model(), "openai/gpt-oss-120b")
+        os.environ["OPENROUTER_MODEL"] = "env-model"
+        self.assertEqual(st.get_model(), "env-model")
+        del os.environ["OPENROUTER_MODEL"]
+        self.assertTrue(st.remove_model())
+        self.assertIsNone(st.get_model())
+
+
 if __name__ == "__main__":
     unittest.main()

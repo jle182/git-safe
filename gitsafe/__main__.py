@@ -126,9 +126,7 @@ def _cmd_models(args):
     print(f"\n  {len(rows)} models on OpenRouter: {len(free)} free - {len(paid)} paid - {len(a_tier)} tier A\n")
     if a_tier:
         print(c("  BEST FOR VULN DETECTION - tier A (PrimeVul)", "green"))
-        show(a_tier, 10)
-        if len(a_tier) > 10:
-            print(dim(f"    ... {len(a_tier) - 10} more"))
+        show(a_tier, len(a_tier))
         print()
     print(c("  FREE", "green"))
     show(free, 8)

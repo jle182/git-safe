@@ -72,6 +72,8 @@ Scan summaries show the best-ranked models first ([A]/[B]/[C] tiers curated from
 
 ### Key & model management
 
+`git safe help` lists every command with examples.
+
 ```console
 git safe key            # store/replace your OpenRouter key (hidden input, chmod 600)
 git safe key --remove   # forget the stored key

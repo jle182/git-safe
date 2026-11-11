@@ -90,16 +90,24 @@ def _cmd_models(args):
 
     def show(rs, limit):
         for mid, pin, pout, ctx in rs[:limit]:
+            t = tier_of(mid)
             ctxs = f"{ctx / 1000:.0f}k" if ctx >= 1000 else str(ctx)
             price = "free" if (pin == 0 and pout == 0) else f"${pin:.2f} in / ${pout:.2f} out"
-            print(f"    {mid:<46} {price:>22}   {ctxs:>6} ctx")
+            print(f"    [{t}] {mid:<43} {price:>22}   {ctxs:>6} ctx")
+
+    def legend():
+        print(dim("    " + LEGEND))
+
+    a_tier = [r for r in rows if tier_of(r[0]) == "A"]
+    free = [r for r in rows if r[1] == 0 and r[2] == 0]
+    paid = [r for r in rows if not (r[1] == 0 and r[2] == 0)]
 
     if flt == "free":
-        free = [r for r in rows if r[1] == 0 and r[2] == 0]
         print(f"\n  {len(free)} free models (of {len(rows)} total) - set one: git safe model <id>\n")
         show(free, 40)
         if len(free) > 40:
             print(dim(f"    ... and {len(free) - 40} more"))
+        legend()
         return
     if flt:
         q = flt.lower()
@@ -107,15 +115,21 @@ def _cmd_models(args):
         if not hits:
             print("  no models match.")
             return
-        print(f"\n  {len(hits)} models matching '{flt}' (of {len(rows)} total)\n")
+        top = [r for r in hits if tier_of(r[0]) == "A"]
+        print(f"\n  {len(hits)} models matching '{flt}' (of {len(rows)} total) - {len(top)} are tier A\n")
         show(hits, 40)
         if len(hits) > 40:
             print(dim(f"    ... and {len(hits) - 40} more - narrow the search"))
+        legend()
         return
 
-    free = [r for r in rows if r[1] == 0 and r[2] == 0]
-    paid = [r for r in rows if not (r[1] == 0 and r[2] == 0)]
-    print(f"\n  {len(rows)} models on OpenRouter: {len(free)} free · {len(paid)} paid\n")
+    print(f"\n  {len(rows)} models on OpenRouter: {len(free)} free - {len(paid)} paid - {len(a_tier)} tier A\n")
+    if a_tier:
+        print(c("  BEST FOR VULN DETECTION - tier A (PrimeVul)", "green"))
+        show(a_tier, 10)
+        if len(a_tier) > 10:
+            print(dim(f"    ... {len(a_tier) - 10} more"))
+        print()
     print(c("  FREE", "green"))
     show(free, 8)
     if len(free) > 8:
@@ -125,8 +139,8 @@ def _cmd_models(args):
     show(paid, 30)
     if len(paid) > 30:
         print(dim(f"    ... and {len(paid) - 30} more - search: git safe models <name, e.g. openai>"))
+    legend()
     print(dim("\n    set one: git safe model <id>"))
-
 
 def _ask(prompt, valid, default):
     while True:
@@ -228,6 +242,39 @@ def _print_lookup(summary, opts):
             print(dim(f"    … {hidden} more not shown (display: {opts['display']} — change: git safe options)"))
 
 
+def _cmd_help():
+    print(f"""
+  {c('git safe', 'bold')} {dim('v' + __version__)} - scan public repos for vulnerabilities with your own OpenRouter key
+
+  SCANNING
+    git safe <owner/repo>         scan a repo (any URL form: owner/repo, https://..., .git)
+    git safe <repo> --model <id>  use a specific model for this scan
+
+  YOUR KEY
+    git safe key                  store/replace your OpenRouter key (hidden input, verified)
+    git safe key --remove         forget the stored key
+
+  MODELS
+    git safe models               catalog: tier-A picks, then free, then paid
+    git safe models free          zero-cost models only
+    git safe models <text>        search, e.g. git safe models anthropic
+    git safe model                show your current default model
+    git safe model <id>           set the default model
+
+  RESULTS DISPLAY
+    git safe options              run the setup wizard / re-run it
+    git safe options display top1|top3|all      how many scans to show
+    git safe options telemetry show|hide        surface analytics/trackers?
+    git safe options findings none|10|all       how many findings listed after your scan
+
+  MISC
+    git safe help                 this screen
+    git safe --version            version
+
+  Env: OPENROUTER_API_KEY overrides stored key - OPENROUTER_MODEL overrides default model
+  Docs: https://github.com/jle182/git-safe
+""")
+
 def _cli(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "key":
@@ -241,6 +288,9 @@ def _cli(argv=None):
         return
     if args and args[0] == "options":
         _cmd_options(args[1:])
+        return
+    if args and args[0] == "help":
+        _cmd_help()
         return
 
     ap = argparse.ArgumentParser(
@@ -256,7 +306,7 @@ def _cli(argv=None):
     ap.add_argument("--version", action="version", version=f"git-safe {__version__}")
     a = ap.parse_args(args)
     if not a.repo:
-        ap.error("usage: git safe <owner/repo>  (or: git safe key | model | models | options)")
+        ap.error("usage: git safe <owner/repo>  (or: git safe help | key | model | models | options)")
 
     model = a.model or get_model() or DEFAULT_MODEL
     opts = load()

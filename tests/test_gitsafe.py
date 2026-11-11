@@ -324,5 +324,42 @@ class TestOptions(unittest.TestCase):
         self.assertEqual(len(opt.select_scans(hist, "all")), 3)
 
 
+
+class TestModelsAndHelp(unittest.TestCase):
+    def test_models_listing_shows_tiers_and_atier_section(self):
+        import io, contextlib
+        import gitsafe.__main__ as gm
+        fake = [
+            {"id": "openai/gpt-4.1", "pricing": {"prompt": "0.0000002", "completion": "0.0000008"},
+             "context_length": 1000000},
+            {"id": "unknown/vendor", "pricing": {"prompt": "0", "completion": "0"},
+             "context_length": 8000},
+        ]
+        orig = gm.fetch_models
+        gm.fetch_models = lambda timeout=20: fake
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                gm._cmd_models([])
+        finally:
+            gm.fetch_models = orig
+        out = buf.getvalue()
+        self.assertIn("BEST FOR VULN DETECTION", out)
+        self.assertIn("[A]", out)
+        self.assertIn("[C]", out)
+        self.assertIn("openai/gpt-4.1", out)
+
+    def test_help_lists_all_commands(self):
+        import io, contextlib
+        import gitsafe.__main__ as gm
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gm._cmd_help()
+        out = buf.getvalue()
+        for needle in ("git safe key", "git safe models", "git safe options",
+                       "git safe help", "git safe model", "git safe <owner/repo>"):
+            self.assertIn(needle, out)
+
+
 if __name__ == "__main__":
     unittest.main()

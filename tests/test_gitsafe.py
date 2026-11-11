@@ -155,7 +155,7 @@ class TestServer(unittest.TestCase):
         self.assertFalse(b["duplicate"])
         s, b = self._post(self._scan())
         self.assertEqual(s, 201)
-        self.assertTrue(b["duplicate"])
+        self.assertTrue(b["updated"])
         s, b = self._get("/api/v1/scans?repo=github.com/a/b")
         self.assertEqual(b["scans"], 1)
         self.assertEqual(b["vulnerabilities"], 1)
@@ -175,6 +175,24 @@ class TestServer(unittest.TestCase):
         s, _ = self._get("/definitely-not-here")
         self.assertEqual(s, 404)
 
+    def test_rescan_same_reporter_updates_row(self):
+        s, b = self._post(self._scan(findings=[{"file": "x.py", "line": 1, "severity": "high",
+                                               "title": "t", "description": "d"}]))
+        self.assertEqual(s, 201)
+        self.assertFalse(b.get("updated", False))
+        s, b = self._post(self._scan(model="m2", findings=[
+            {"file": "x.py", "line": 1, "severity": "high", "title": "t", "description": "d"},
+            {"file": "y.js", "line": 1, "severity": "info", "title": "gtag", "description": "d",
+             "category": "telemetry"},
+        ]))
+        self.assertEqual(s, 201)
+        self.assertTrue(b.get("updated"))
+        s, b = self._get("/api/v1/scans?repo=github.com/a/b")
+        self.assertEqual(b["scans"], 1)        # still one row for this reporter+commit
+        self.assertEqual(b["vulnerabilities"], 1)
+        self.assertEqual(b["telemetry"], 1)    # refreshed to the newest scan, not summed
+        self.assertEqual(b["last_model"], "m2")
+
     def test_validation_and_normalization(self):
         s, _ = self._post(self._scan(commit_sha="zzz"))
         self.assertEqual(s, 400)
@@ -186,7 +204,7 @@ class TestServer(unittest.TestCase):
         self.assertEqual(s, 201)  # bad line coerced, not a 500
         s, b = self._post(self._scan(repo_url="https://github.com/a/b"))
         self.assertEqual(s, 201)
-        self.assertTrue(b["duplicate"])  # full URL normalizes to the canonical key
+        self.assertTrue(b["updated"])  # full URL normalizes to the canonical key
         s, b = self._get("/api/v1/stats")
         self.assertEqual(b["total_scans"], 1)
 
@@ -258,6 +276,52 @@ class TestSettings(unittest.TestCase):
         del os.environ["OPENROUTER_MODEL"]
         self.assertTrue(st.remove_model())
         self.assertIsNone(st.get_model())
+
+
+
+class TestOptions(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        tmp = tempfile.mkdtemp(prefix="gitsafe-opts-")
+        p = mock.patch("gitsafe.options.Path.home", lambda: Path(tmp))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_defaults_roundtrip_and_invalid_ignored(self):
+        import gitsafe.options as opt
+        self.assertEqual(opt.load(), opt.DEFAULTS)
+        opt.save({"display": "all", "telemetry": "hide"})
+        o = opt.load()
+        self.assertEqual(o["display"], "all")
+        self.assertEqual(o["telemetry"], "hide")
+        self.assertEqual(o["findings"], "none")
+        opt.save({"display": "bogus", "telemetry": "show"})
+        self.assertEqual(opt.load()["display"], "top1")
+        self.assertFalse(opt.first_run_needed())
+
+    def test_tier_of(self):
+        import gitsafe.options as opt
+        self.assertEqual(opt.tier_of("openai/gpt-4.1"), "A")
+        self.assertEqual(opt.tier_of("google/gemini-2.5-flash:free"), "A")
+        self.assertEqual(opt.tier_of("anthropic/claude-opus-4.1"), "A")
+        self.assertEqual(opt.tier_of("openai/gpt-4o-mini"), "B")
+        self.assertEqual(opt.tier_of("some/unknown-model"), "C")
+
+    def test_select_scans_modes(self):
+        import gitsafe.options as opt
+        hist = [
+            {"model": "openai/gpt-4o-mini", "scanned_at": "2026-11-05T00:00:00Z"},
+            {"model": "openai/gpt-4.1", "scanned_at": "2026-11-04T00:00:00Z"},
+            {"model": "some/unknown", "scanned_at": "2026-11-06T00:00:00Z"},
+        ]
+        top1 = opt.select_scans(hist, "top1")
+        self.assertEqual(len(top1), 1)
+        self.assertEqual(top1[0]["model"], "openai/gpt-4.1")
+        top3 = opt.select_scans(hist, "top3")
+        self.assertEqual([h["model"] for h in top3],
+                         ["openai/gpt-4.1", "openai/gpt-4o-mini", "some/unknown"])
+        self.assertEqual(len(opt.select_scans(hist, "all")), 3)
 
 
 if __name__ == "__main__":

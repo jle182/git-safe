@@ -59,6 +59,17 @@ git safe https://gitlab.com/o/r  # any public git host
 
 Flags: `--api URL` · `--model NAME` · `-y` (skip prompts) · `--version`
 
+### Results display
+
+```console
+git safe options              # first-run wizard / re-run it anytime
+git safe options display top1|top3|all
+git safe options telemetry show|hide
+git safe options findings none|10|all
+```
+
+Scan summaries show the best-ranked models first ([A]/[B]/[C] tiers curated from the PrimeVul vulnerability benchmark; unknown models count as C).
+
 ### Key & model management
 
 ```console

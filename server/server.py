@@ -210,7 +210,15 @@ class Handler(BaseHTTPRequestHandler):
                 (v["repo"], v["sha"], v["rid"]),
             ).fetchone()
             if row:
-                return self._json(201, {"id": row["id"], "duplicate": True})
+                _conn.execute(
+                    "UPDATE scans SET model=?, files_scanned=?, vulnerabilities=?, telemetry=?, "
+                    "high=?, medium=?, low=?, findings_json=?, "
+                    "scanned_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+                    (v["model"], v["files"], v["vulns"], v["tele"], v["high"], v["medium"],
+                     v["low"], json.dumps(v["findings"]), row["id"]),
+                )
+                _conn.commit()
+                return self._json(201, {"id": row["id"], "duplicate": False, "updated": True})
             cur = _conn.execute(
                 "INSERT INTO scans(repo_url,commit_sha,model,files_scanned,vulnerabilities,"
                 "telemetry,high,medium,low,findings_json,reporter_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
